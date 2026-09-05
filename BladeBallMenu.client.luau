@@ -124,7 +124,7 @@ local dragBar = create("Frame", {
 local title = label(dragBar, "Blade ball", UDim2.fromOffset(24, 14), UDim2.fromOffset(250, 30), 25)
 title.Font = Enum.Font.GothamBlack
 accent(title, "TextColor3")
-label(dragBar, "TEST PANEL  /  v1.3", UDim2.fromOffset(25, 47), UDim2.fromOffset(230, 18), 10, colors.muted)
+label(dragBar, "TEST PANEL  /  v1.4", UDim2.fromOffset(25, 47), UDim2.fromOffset(230, 18), 10, colors.muted)
 local close = button(window, "×", UDim2.new(1, -52, 0, 20), UDim2.fromOffset(32, 32))
 close.TextSize = 24
 local divider = create("Frame", {
@@ -245,15 +245,6 @@ end
 
 local home = page("01   Главная", 1)
 local settings = page("02   Настройки", 2)
-action(home, "Панель готова", "Интерфейс для тестирования своего плейса.", "Проверить", 3, function() notify("Всё работает. Добро пожаловать, " .. player.DisplayName .. "!") end)
-local stats = card(home, "Производительность", "FPS: измерение…", 2)
-local statsLabel = stats:GetChildren()
-local fpsLabel
-for _, object in ipairs(statsLabel) do
-    if object:IsA("TextLabel") and string.find(object.Text, "FPS", 1, true) then fpsLabel = object end
-end
-label(stats, "LIVE", UDim2.new(1, -75, 0, 30), UDim2.fromOffset(60, 24), 13, colors.accent)
-action(home, "Текущая сессия", "Показать идентификатор плейса.", "Показать", 4, function() notify("PlaceId: " .. tostring(game.PlaceId)) end)
 
 -- Полёт для тестовой сессии. Сервер плейса может ограничивать перемещение.
 local flight = nil
@@ -403,7 +394,7 @@ connect(RunService.PreSimulation, function()
     -- Всё тело повторяет поворот и наклон камеры, включая взгляд вверх/вниз.
     session.orientation.CFrame = camera.CFrame.Rotation
 end)
-local speedCard = card(settings, "Скорость полёта", "30 / 60 / 90 / 120 studs в секунду.", 1)
+local speedCard = card(home, "Скорость полёта", "30 / 60 / 90 / 120 studs в секунду.", 2)
 local speedButton = button(speedCard, "60 studs/s", UDim2.new(1, -126, 0.5, -18), UDim2.fromOffset(110, 36))
 accent(speedButton, "TextColor3")
 connect(speedButton.Activated, function()
@@ -412,18 +403,15 @@ connect(speedButton.Activated, function()
     speedButton.Text = tostring(flightSpeed) .. " studs/s"
 end)
 renderFlight()
-toggle(settings, "Показывать FPS", "Локальный счётчик на главной вкладке.", true, 2, function(enabled)
-    fpsLabel.Visible = enabled
-end)
 
-toggle(settings, "Анимации", "Плавное изменение оформления кнопок.", true, 3, function(enabled) animations = enabled end)
-toggle(settings, "Уведомления", "Всплывающие сообщения внизу экрана.", true, 4, function(enabled)
+toggle(settings, "Анимации", "Плавное изменение оформления кнопок.", true, 1, function(enabled) animations = enabled end)
+toggle(settings, "Уведомления", "Всплывающие сообщения внизу экрана.", true, 2, function(enabled)
     notifications = enabled
     if not enabled then toast.Visible = false end
 end)
 local themes = {colors.accent, Color3.fromRGB(161, 147, 255), Color3.fromRGB(255, 188, 105)}
 local themeIndex = 1
-action(settings, "Акцентный цвет", "Мятный / лавандовый / янтарный.", "Сменить", 5, function()
+action(settings, "Акцентный цвет", "Мятный / лавандовый / янтарный.", "Сменить", 3, function()
     themeIndex = themeIndex % #themes + 1
     colors.accent = themes[themeIndex]
     for _, entry in ipairs(accentObjects) do
@@ -432,13 +420,4 @@ action(settings, "Акцентный цвет", "Мятный / лавандов
     for name, body in pairs(pages) do if body.Visible then selectTab(name); break end end
 end)
 
-local elapsed, frames = 0, 0
-connect(RunService.RenderStepped, function(dt)
-    elapsed += dt
-    frames += 1
-    if elapsed >= 0.75 then
-        fpsLabel.Text = string.format("FPS: %d  •  клиентская сессия", math.floor(frames / elapsed + 0.5))
-        elapsed, frames = 0, 0
-    end
-end)
 selectTab("01   Главная")
