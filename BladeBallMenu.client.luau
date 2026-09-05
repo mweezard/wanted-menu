@@ -130,7 +130,7 @@ local dragBar = create("Frame", {
 local title = label(dragBar, "Blade ball", UDim2.fromOffset(24, 14), UDim2.fromOffset(250, 30), 25)
 title.Font = Enum.Font.GothamBlack
 accent(title, "TextColor3")
-label(dragBar, "v1.6", UDim2.fromOffset(25, 47), UDim2.fromOffset(230, 18), 10, colors.muted)
+label(dragBar, "v1.7", UDim2.fromOffset(25, 47), UDim2.fromOffset(230, 18), 10, colors.muted)
 local close = button(window, "×", UDim2.new(1, -52, 0, 20), UDim2.fromOffset(32, 32))
 close.TextSize = 24
 local divider = create("Frame", {
@@ -507,7 +507,9 @@ local function newAutoParryController(options)
     local world = workspace
     local connections, containerConnections, characterConnections, records = {}, {}, {}, {}
     local enabled, destroyed, focused = false, false, true
-    local sender, syntheticDown = nil, false
+    local sender, senderName, syntheticDown = nil, nil, false
+    local attempts, hasStarted, lastDiscoveryAt, lastDiagnosticsAt = 0, false, -math.huge, -math.huge
+    local lastDiagnostics
     local status, container
     local clock, lastPingAt, oneWayPing, lastReleaseAttempt = 0, -math.huge, 0, -math.huge
     -- Timing estimates, not the game's server rules or a guarantee of a successful block.
@@ -558,14 +560,14 @@ local function newAutoParryController(options)
         if ok and virtualInput then
             local supported, sendKey = pcall(function() return virtualInput.SendKey end)
             if supported and type(sendKey) == "function" then
-                return function(down) virtualInput:SendKey(down, Enum.KeyCode.F, false) end
+                return function(down) virtualInput:SendKey(down, Enum.KeyCode.F, false) end, "VirtualInput"
             end
         end
         local fallbackOK, manager = pcall(function() return game:GetService("VirtualInputManager") end)
         if fallbackOK and manager then
             local supported, sendKeyEvent = pcall(function() return manager.SendKeyEvent end)
             if supported and type(sendKeyEvent) == "function" then
-                return function(down) manager:SendKeyEvent(down, Enum.KeyCode.F, false, game) end
+                return function(down) manager:SendKeyEvent(down, Enum.KeyCode.F, false, game) end, "VirtualInputManager"
             end
         end
         return nil
@@ -598,6 +600,20 @@ local function newAutoParryController(options)
             records[ball] = nil
         end
     end
+    local function refreshTarget(ball, record)
+        local nextTarget = ball:GetAttribute("target")
+        if nextTarget ~= record.target then
+            record.target, record.fired, record.awayTime = nextTarget, false, 0
+            record.lastPosition = nil
+        end
+    end
+    local function refreshRealBall(ball, record, fromEvent)
+        local nextReal = ball:GetAttribute("realBall") == true
+        if fromEvent or nextReal ~= record.real then
+            record.real = nextReal
+            record.fired, record.awayTime, record.lastPosition = false, 0, nil
+        end
+    end
     local function addBall(ball)
         if records[ball] or not ball:IsA("BasePart") then return end
         local record = {
@@ -607,15 +623,10 @@ local function newAutoParryController(options)
         }
         records[ball] = record
         watch(ball:GetAttributeChangedSignal("target"), function()
-            local nextTarget = ball:GetAttribute("target")
-            if nextTarget ~= record.target then
-                record.target, record.fired, record.awayTime = nextTarget, false, 0
-                record.lastPosition = nil
-            end
+            refreshTarget(ball, record)
         end, record.connections)
         watch(ball:GetAttributeChangedSignal("realBall"), function()
-            record.real = ball:GetAttribute("realBall") == true
-            record.fired, record.awayTime, record.lastPosition = false, 0, nil
+            refreshRealBall(ball, record, true)
         end, record.connections)
     end
     local function bindContainer()
@@ -625,9 +636,46 @@ local function newAutoParryController(options)
         for ball in pairs(records) do removeBall(ball) end
         container = nextContainer
         if container then
-            watch(container.ChildAdded, addBall, containerConnections)
-            watch(container.ChildRemoved, removeBall, containerConnections)
-            for _, ball in ipairs(container:GetChildren()) do addBall(ball) end
+            watch(container.DescendantAdded, addBall, containerConnections)
+            watch(container.DescendantRemoving, removeBall, containerConnections)
+            for _, ball in ipairs(container:GetDescendants()) do addBall(ball) end
+        end
+    end
+    local function shortText(value, limit)
+        local text = tostring(value):gsub("[%c]", " ")
+        local length = utf8.len(text)
+        if length and length > limit then return text:sub(1, utf8.offset(text, limit + 1) - 1) .. "…" end
+        if not length and #text > limit then return text:sub(1, limit) .. "…" end
+        return text
+    end
+    local function publishDiagnostics()
+        if destroyed or not options.onDiagnostics or clock - lastDiagnosticsAt < 0.2 then return end
+        local text = "Мяч: —\nЦель: —\nВвод: —\nПопытки блока: 0"
+        if hasStarted then
+            local partCount, realCount, chosen, chosenPriority = 0, 0, nil, -1
+            for _, record in pairs(records) do
+                partCount += 1
+                if record.real then realCount += 1 end
+                local priority = 0
+                if record.real then
+                    if record.target == player.Name then priority = 4
+                    elseif type(record.target) == "string" and record.target ~= "" then priority = 3
+                    elseif record.target ~= nil and type(record.target) ~= "string" then priority = 2
+                    else priority = 1 end
+                end
+                if priority > chosenPriority then chosen, chosenPriority = record, priority end
+            end
+            local ballText = container and ("частей " .. partCount .. " · realBall " .. realCount) or "контейнер отсутствует"
+            local targetText = "—"
+            if chosen then
+                targetText = chosen.target == nil and "отсутствует" or (typeof(chosen.target) .. ": " .. shortText(chosen.target, 42))
+            end
+            text = "Мяч: " .. ballText .. "\nЦель: " .. targetText
+                .. "\nВвод: " .. (senderName or "—") .. "\nПопытки блока: " .. attempts
+        end
+        if text ~= lastDiagnostics then
+            lastDiagnosticsAt, lastDiagnostics = clock, text
+            options.onDiagnostics(text)
         end
     end
     local function bindCharacter(character)
@@ -671,6 +719,7 @@ local function newAutoParryController(options)
             return false
         end
         record.fired, record.awayTime = true, 0
+        attempts += 1
         -- Keep down/up together: no delayed callback can release a later physical F press.
         if not releaseKey() then
             inputFailure("Ошибка отпускания F")
@@ -687,12 +736,20 @@ local function newAutoParryController(options)
     watch(inputService.WindowFocused, function() focused = true end)
     watch(inputService.TextBoxFocused, function() pauseNow("Пауза: ввод текста") end)
     watch(guiService.MenuOpened, function() pauseNow("Пауза: меню Roblox") end)
-    watch(runService.Heartbeat, function(deltaTime)
+    local function heartbeat(deltaTime)
         if destroyed then return end
         clock += deltaTime
         if not enabled then
             if syntheticDown and clock - lastReleaseAttempt >= 0.25 and not pauseReason() then releaseKey() end
             return
+        end
+        if clock - lastDiscoveryAt >= 0.5 then
+            lastDiscoveryAt = clock
+            bindContainer()
+        end
+        for ball, record in pairs(records) do
+            refreshTarget(ball, record)
+            refreshRealBall(ball, record, false)
         end
         local paused = pauseReason()
         if paused then pauseNow(paused); return end
@@ -710,12 +767,20 @@ local function newAutoParryController(options)
         end
         if deltaTime <= 0 or deltaTime > 0.25 then resetSamples(); return end
         local selected, earliest, hasRealBall, isTargeted = nil, math.huge, false, false
+        local partCount, hasStringTarget, hasUnsupportedTarget, hasFiredTarget = 0, false, false, false
         for ball, record in pairs(records) do
+            partCount += 1
             if record.real then
                 hasRealBall = true
+                if type(record.target) == "string" and record.target ~= "" then
+                    hasStringTarget = true
+                elseif record.target ~= nil and type(record.target) ~= "string" then
+                    hasUnsupportedTarget = true
+                end
                 local velocity = ballVelocity(ball, record, deltaTime)
                 if record.target == player.Name then
                     isTargeted = true
+                    if record.fired then hasFiredTarget = true end
                     local offset = ball.Position - root.Position
                     local distance = offset.Magnitude
                     local relativeVelocity = velocity - root.AssemblyLinearVelocity
@@ -744,15 +809,34 @@ local function newAutoParryController(options)
                 record.lastPosition = nil
             end
         end
-        if not container or not hasRealBall then setStatus("Ожидание мяча")
-        elseif not isTargeted then setStatus("Ожидание наведения")
+        if not container then setStatus("Контейнер Balls отсутствует")
+        elseif partCount == 0 then setStatus("Нет частей мяча")
+        elseif not hasRealBall then setStatus("Нет realBall")
+        elseif not isTargeted then
+            if hasStringTarget then setStatus("Мяч направлен другому игроку")
+            elseif hasUnsupportedTarget then setStatus("Неподдерживаемый тип цели")
+            else setStatus("Цель отсутствует") end
         elseif inputService:IsKeyDown(Enum.KeyCode.F) and not syntheticDown then setStatus("Пауза: F удерживается")
+        elseif hasFiredTarget then setStatus("Блок уже отправлен")
         else setStatus("Отслеживание мяча") end
-        if selected then pressParry(selected) end
+        if selected and pressParry(selected) then setStatus("Блок уже отправлен") end
+    end
+    watch(runService.Heartbeat, function(deltaTime)
+        local ok, err = pcall(function()
+            heartbeat(deltaTime)
+            publishDiagnostics()
+        end)
+        if not ok then
+            pcall(setEnabledState, false)
+            pcall(releaseKey)
+            pcall(setStatus, "Ошибка autoparry: " .. shortText(err, 100))
+            pcall(publishDiagnostics)
+        end
     end)
     bindContainer()
     bindCharacter(player.Character)
     setStatus("Выключено")
+    publishDiagnostics()
 
     local controller = {}
     function controller:SetEnabled(value)
@@ -763,12 +847,19 @@ local function newAutoParryController(options)
                 setStatus("Ошибка отпускания F")
                 return false, "Не удалось отпустить F"
             end
-            sender = resolveInput()
+            sender, senderName = resolveInput()
+            hasStarted = true
             if not sender then
                 setStatus("Ввод недоступен в этой среде")
                 return false, "Среда не предоставляет виртуальный ввод"
             end
-            for _, record in pairs(records) do record.fired = false end
+            bindContainer()
+            lastDiscoveryAt = clock
+            for ball, record in pairs(records) do
+                refreshTarget(ball, record)
+                refreshRealBall(ball, record, false)
+                record.fired = false
+            end
             resetSamples()
             setEnabledState(true)
             setStatus(pauseReason() or "Ожидание мяча")
@@ -816,11 +907,13 @@ round(parryThumb, 10)
 local parryState = label(parryCard, "ВЫКЛ", UDim2.new(1, -104, 0, 60), UDim2.fromOffset(88, 16), 10, colors.muted)
 parryState.TextXAlignment = Enum.TextXAlignment.Center
 local parryStatusCard = create("Frame", {
-    Name = "AutoParryStatus", Size = UDim2.new(1, -8, 0, 84), BackgroundColor3 = colors.panel, LayoutOrder = 2,
+    Name = "AutoParryStatus", Size = UDim2.new(1, -8, 0, 184), BackgroundColor3 = colors.panel, LayoutOrder = 2,
 }, parryPage)
 round(parryStatusCard)
 label(parryStatusCard, "Состояние", UDim2.fromOffset(16, 12), UDim2.new(1, -32, 0, 24), 14)
 local parryStatusLabel = label(parryStatusCard, "Выключено", UDim2.fromOffset(16, 42), UDim2.new(1, -32, 0, 28), 12, colors.muted)
+local parryDiagnosticsLabel = label(parryStatusCard, "Мяч: —\nЦель: —\nВвод: —\nПопытки блока: 0", UDim2.fromOffset(16, 78), UDim2.new(1, -32, 0, 92), 11, colors.muted)
+parryDiagnosticsLabel.TextYAlignment = Enum.TextYAlignment.Top
 local parryEnabled = false
 local function renderAutoParry()
     parryState.Text = parryEnabled and "ВКЛ" or "ВЫКЛ"
@@ -832,6 +925,7 @@ table.insert(accentObjects, {parryButton, "toggle", renderAutoParry})
 local autoParry = newAutoParryController({
     player = player,
     onStatus = function(message) if gui.Parent then parryStatusLabel.Text = message end end,
+    onDiagnostics = function(message) if gui.Parent then parryDiagnosticsLabel.Text = message end end,
     onEnabled = function(enabled)
         parryEnabled = enabled
         if gui.Parent then renderAutoParry() end
