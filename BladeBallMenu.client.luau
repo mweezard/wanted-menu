@@ -1,7 +1,6 @@
--- BLADE BALL / TEST PANEL
--- Установка: StarterPlayer > StarterPlayerScripts > LocalScript.
--- Самостоятельное меню для своего плейса / разрешённой тестовой копии.
--- Специфичные для Blade ball игровые функции подключаются отдельно.
+-- BLADE BALL / MENU
+-- Autoparry: экспериментальная совместимость по доступной структуре мяча.
+-- Требуется доступный синтетический ввод; успешное отбивание не гарантировано.
 
 local Players = game:GetService("Players")
 local TweenService = game:GetService("TweenService")
@@ -49,6 +48,7 @@ local notifications = true
 local accentObjects = {}
 local stopFlight = function() end
 local stopSliderDrag = function() end
+local stopAutoParry = function() end
 local menuActionName = "BladeBallToggleMenu_" .. game:GetService("HttpService"):GenerateGUID(false)
 local function connect(signal, callback)
     local connection = signal:Connect(callback)
@@ -103,6 +103,7 @@ gui:SetAttribute("CodexTestPanel", true)
 gui.Destroying:Connect(function()
     ContextActionService:UnbindAction(menuActionName)
     stopSliderDrag()
+    stopAutoParry()
     stopFlight()
     for _, connection in ipairs(connections) do connection:Disconnect() end
 end)
@@ -129,7 +130,7 @@ local dragBar = create("Frame", {
 local title = label(dragBar, "Blade ball", UDim2.fromOffset(24, 14), UDim2.fromOffset(250, 30), 25)
 title.Font = Enum.Font.GothamBlack
 accent(title, "TextColor3")
-label(dragBar, "TEST PANEL  /  v1.5", UDim2.fromOffset(25, 47), UDim2.fromOffset(230, 18), 10, colors.muted)
+label(dragBar, "v1.6", UDim2.fromOffset(25, 47), UDim2.fromOffset(230, 18), 10, colors.muted)
 local close = button(window, "×", UDim2.new(1, -52, 0, 20), UDim2.fromOffset(32, 32))
 close.TextSize = 24
 local divider = create("Frame", {
@@ -139,8 +140,7 @@ local divider = create("Frame", {
 local sidebar = create("Frame", {Position = UDim2.fromOffset(20, 96), Size = UDim2.fromOffset(150, 280), BackgroundTransparency = 1}, window)
 create("UIListLayout", {Padding = UDim.new(0, 10), SortOrder = Enum.SortOrder.LayoutOrder}, sidebar)
 local content = create("Frame", {Position = UDim2.fromOffset(190, 96), Size = UDim2.fromOffset(490, 305), BackgroundTransparency = 1}, window)
-label(window, "LOCAL SESSION  •  " .. player.DisplayName, UDim2.fromOffset(24, 413), UDim2.fromOffset(470, 20), 11, colors.muted)
-label(window, "Backspace — меню", UDim2.fromOffset(522, 413), UDim2.fromOffset(158, 20), 11, colors.muted)
+label(window, player.DisplayName, UDim2.fromOffset(24, 413), UDim2.fromOffset(470, 20), 11, colors.muted)
 
 local reopen = button(root, "BB", UDim2.new(0, 16, 0.5, -22), UDim2.fromOffset(44, 44))
 accent(reopen, "TextColor3")
@@ -222,24 +222,23 @@ local function page(name, index)
     connect(tab.Activated, function() selectTab(name) end)
     return body
 end
-local function card(parent, heading, description, index)
+local function card(parent, heading, index)
     local frame = create("Frame", {Size = UDim2.new(1, -8, 0, 84), BackgroundColor3 = colors.panel, LayoutOrder = index}, parent)
     round(frame)
-    label(frame, heading, UDim2.fromOffset(16, 10), UDim2.new(1, -165, 0, 25), 14)
-    label(frame, description, UDim2.fromOffset(16, 37), UDim2.new(1, -165, 0, 38), 11, colors.muted)
+    label(frame, heading, UDim2.fromOffset(16, 29), UDim2.new(1, -165, 0, 25), 14)
     return frame
 end
-local function action(parent, heading, description, caption, index, callback)
-    local frame = card(parent, heading, description, index)
+local function action(parent, heading, caption, index, callback)
+    local frame = card(parent, heading, index)
     local control = button(frame, caption, UDim2.new(1, -126, 0.5, -18), UDim2.fromOffset(110, 36))
     accent(control, "TextColor3")
     connect(control.Activated, function()
         local ok, err = pcall(callback)
-        if not ok then warn("BladeBallMenu: " .. tostring(err)); notify("Ошибка функции. Смотри Output.") end
+        if not ok then warn("BladeBallMenu: " .. tostring(err)); notify("Ошибка функции.") end
     end)
 end
-local function toggle(parent, heading, description, initial, index, callback)
-    local frame = card(parent, heading, description, index)
+local function toggle(parent, heading, initial, index, callback)
+    local frame = card(parent, heading, index)
     local enabled = initial
     local control = button(frame, "", UDim2.new(1, -104, 0.5, -18), UDim2.fromOffset(88, 36))
     local function render()
@@ -253,7 +252,8 @@ local function toggle(parent, heading, description, initial, index, callback)
 end
 
 local home = page("01   Главная", 1)
-local settings = page("02   Настройки", 2)
+local parryPage = page("02   Autoparry", 2)
+local settings = page("03   Настройки", 3)
 
 -- Полёт для тестовой сессии. Сервер плейса может ограничивать перемещение.
 local flight = nil
@@ -265,7 +265,7 @@ local acceptedKeys = {
     [Enum.KeyCode.W] = true, [Enum.KeyCode.A] = true,
     [Enum.KeyCode.S] = true, [Enum.KeyCode.D] = true,
 }
-local flightCard = card(home, "полет", "W/S — по направлению камеры\nA/D — в стороны. Смотри вверх, чтобы набрать высоту.", 1)
+local flightCard = card(home, "полет", 1)
 local flightButton = create("TextButton", {
     Name = "FlightToggle", BackgroundTransparency = 1, Text = "",
     Position = UDim2.new(1, -104, 0, 20), Size = UDim2.fromOffset(88, 44),
@@ -320,11 +320,11 @@ local function startFlight()
     local humanoid = character and character:FindFirstChildOfClass("Humanoid")
     local characterRoot = character and character:FindFirstChild("HumanoidRootPart")
     if not humanoid or not characterRoot or humanoid.Health <= 0 then
-        notify("Дождись появления персонажа.")
+        notify("Персонаж недоступен.")
         return
     end
     if humanoid.Sit or humanoid.PlatformStand or characterRoot.Anchored then
-        notify("Для полёта выйди из транспорта и встань на ноги.")
+        notify("Полёт сейчас недоступен.")
         return
     end
     flight = {
@@ -366,7 +366,7 @@ local function startFlight()
     if not ok then
         stopFlight()
         warn("Blade ball flight: " .. tostring(err))
-        notify("Не удалось включить полёт. Смотри Output.")
+        notify("Не удалось включить полёт.")
         return
     end
     if focused and not UserInputService:GetFocusedTextBox() then
@@ -375,7 +375,7 @@ local function startFlight()
         end
     end
     renderFlight()
-    notify("полет включён. Управляй WASD и направлением камеры.")
+    notify("полет включён.")
 end
 local function toggleFlight()
     if flight then stopFlight() else startFlight() end
@@ -497,14 +497,361 @@ connect(UserInputService.TextBoxFocused, stopSliderDrag)
 setFlightSpeed(flightSpeed)
 renderFlight()
 
-toggle(settings, "Анимации", "Плавное изменение оформления кнопок.", true, 1, function(enabled) animations = enabled end)
-toggle(settings, "Уведомления", "Всплывающие сообщения внизу экрана.", true, 2, function(enabled)
+-- Runtime compatibility adapter; current Blade ball internals are not guaranteed.
+local function newAutoParryController(options)
+    options = options or {}
+    local player = options.player or game:GetService("Players").LocalPlayer
+    local runService = options.RunService or game:GetService("RunService")
+    local inputService = options.UserInputService or game:GetService("UserInputService")
+    local guiService = options.GuiService or game:GetService("GuiService")
+    local world = workspace
+    local connections, containerConnections, characterConnections, records = {}, {}, {}, {}
+    local enabled, destroyed, focused = false, false, true
+    local sender, syntheticDown = nil, false
+    local status, container
+    local clock, lastPingAt, oneWayPing, lastReleaseAttempt = 0, -math.huge, 0, -math.huge
+    -- Timing estimates, not the game's server rules or a guarantee of a successful block.
+    local LEAD_TIME, MAX_ONE_WAY_PING = 0.11, 0.15
+    local MIN_CLOSING_SPEED, MIN_APPROACH_COSINE, REARM_AWAY_SECONDS = 2, 0.35, 0.06
+
+    local function setStatus(value)
+        if status ~= value then
+            status = value
+            if options.onStatus then options.onStatus(value) end
+        end
+    end
+    local function setEnabledState(value)
+        if enabled ~= value then
+            enabled = value
+            if options.onEnabled then options.onEnabled(value) end
+        end
+    end
+    local function watch(signal, callback, list)
+        local connection = signal:Connect(callback)
+        table.insert(list or connections, connection)
+        return connection
+    end
+    local function disconnectAll(list)
+        for _, connection in ipairs(list) do connection:Disconnect() end
+        table.clear(list)
+    end
+    local function resetSamples()
+        for _, record in pairs(records) do
+            record.lastPosition = nil
+            record.awayTime = 0
+        end
+    end
+    local function releaseKey()
+        if not syntheticDown then return true end
+        lastReleaseAttempt = clock
+        local ok = pcall(sender, false)
+        if ok then syntheticDown = false end
+        return ok
+    end
+    local function inputFailure(message)
+        setEnabledState(false)
+        releaseKey()
+        setStatus(message)
+    end
+    local function resolveInput()
+        local ok, virtualInput = pcall(function() return inputService:CreateVirtualInput() end)
+        if ok and virtualInput then
+            local supported, sendKey = pcall(function() return virtualInput.SendKey end)
+            if supported and type(sendKey) == "function" then
+                return function(down) virtualInput:SendKey(down, Enum.KeyCode.F, false) end
+            end
+        end
+        local fallbackOK, manager = pcall(function() return game:GetService("VirtualInputManager") end)
+        if fallbackOK and manager then
+            local supported, sendKeyEvent = pcall(function() return manager.SendKeyEvent end)
+            if supported and type(sendKeyEvent) == "function" then
+                return function(down) manager:SendKeyEvent(down, Enum.KeyCode.F, false, game) end
+            end
+        end
+        return nil
+    end
+    local function pauseReason()
+        if not focused then return "Пауза: окно неактивно" end
+        if inputService:GetFocusedTextBox() then return "Пауза: ввод текста" end
+        if guiService.MenuIsOpen then return "Пауза: меню Roblox" end
+        local selected = guiService.SelectedObject
+        if selected then
+            local ok, inCoreGui = pcall(function()
+                return selected:IsDescendantOf(game:GetService("CoreGui"))
+            end)
+            if ok and inCoreGui then return "Пауза: меню Roblox" end
+        end
+        return nil
+    end
+    local function pauseNow(message)
+        resetSamples()
+        if not releaseKey() then
+            inputFailure("Ошибка отпускания F")
+        elseif enabled then
+            setStatus(message)
+        end
+    end
+    local function removeBall(ball)
+        local record = records[ball]
+        if record then
+            disconnectAll(record.connections)
+            records[ball] = nil
+        end
+    end
+    local function addBall(ball)
+        if records[ball] or not ball:IsA("BasePart") then return end
+        local record = {
+            target = ball:GetAttribute("target"),
+            real = ball:GetAttribute("realBall") == true,
+            fired = false, awayTime = 0, connections = {},
+        }
+        records[ball] = record
+        watch(ball:GetAttributeChangedSignal("target"), function()
+            local nextTarget = ball:GetAttribute("target")
+            if nextTarget ~= record.target then
+                record.target, record.fired, record.awayTime = nextTarget, false, 0
+                record.lastPosition = nil
+            end
+        end, record.connections)
+        watch(ball:GetAttributeChangedSignal("realBall"), function()
+            record.real = ball:GetAttribute("realBall") == true
+            record.fired, record.awayTime, record.lastPosition = false, 0, nil
+        end, record.connections)
+    end
+    local function bindContainer()
+        local nextContainer = world:FindFirstChild("Balls")
+        if container == nextContainer then return end
+        disconnectAll(containerConnections)
+        for ball in pairs(records) do removeBall(ball) end
+        container = nextContainer
+        if container then
+            watch(container.ChildAdded, addBall, containerConnections)
+            watch(container.ChildRemoved, removeBall, containerConnections)
+            for _, ball in ipairs(container:GetChildren()) do addBall(ball) end
+        end
+    end
+    local function bindCharacter(character)
+        disconnectAll(characterConnections)
+        pauseNow("Ожидание персонажа")
+        for _, record in pairs(records) do record.fired = false end
+        if character then
+            local function watchHumanoid(child)
+                if child:IsA("Humanoid") then
+                    watch(child.Died, function() pauseNow("Ожидание персонажа") end, characterConnections)
+                end
+            end
+            watch(character.ChildAdded, watchHumanoid, characterConnections)
+            local humanoid = character:FindFirstChildOfClass("Humanoid")
+            if humanoid then watchHumanoid(humanoid) end
+        end
+    end
+    local function ballVelocity(ball, record, deltaTime)
+        local position = ball.Position
+        local measured = record.lastPosition and (position - record.lastPosition) / deltaTime
+        record.lastPosition = position
+        local velocity = ball.AssemblyLinearVelocity
+        local mover = ball:FindFirstChild("zoomies")
+        if mover and mover:IsA("LinearVelocity")
+            and mover.RelativeTo == Enum.ActuatorRelativeTo.World
+            and mover.VelocityConstraintMode == Enum.VelocityConstraintMode.Vector then
+            velocity = mover.VectorVelocity
+        end
+        if measured and measured.Magnitude > 0.5
+            and (velocity.Magnitude < 0.5 or (measured - velocity).Magnitude > math.max(10, measured.Magnitude * 0.5)) then
+            velocity = measured
+        end
+        return velocity
+    end
+    local function pressParry(record)
+        if syntheticDown or inputService:IsKeyDown(Enum.KeyCode.F) then return false end
+        syntheticDown = true
+        local ok = pcall(sender, true)
+        if not ok then
+            inputFailure("Ввод F недоступен в этой среде")
+            return false
+        end
+        record.fired, record.awayTime = true, 0
+        -- Keep down/up together: no delayed callback can release a later physical F press.
+        if not releaseKey() then
+            inputFailure("Ошибка отпускания F")
+            return false
+        end
+        return true
+    end
+
+    watch(world.ChildAdded, function(child) if child.Name == "Balls" then bindContainer() end end)
+    watch(world.ChildRemoved, function(child) if child == container then bindContainer() end end)
+    watch(player.CharacterAdded, bindCharacter)
+    watch(player.CharacterRemoving, function() bindCharacter(nil) end)
+    watch(inputService.WindowFocusReleased, function() focused = false; pauseNow("Пауза: окно неактивно") end)
+    watch(inputService.WindowFocused, function() focused = true end)
+    watch(inputService.TextBoxFocused, function() pauseNow("Пауза: ввод текста") end)
+    watch(guiService.MenuOpened, function() pauseNow("Пауза: меню Roblox") end)
+    watch(runService.Heartbeat, function(deltaTime)
+        if destroyed then return end
+        clock += deltaTime
+        if not enabled then
+            if syntheticDown and clock - lastReleaseAttempt >= 0.25 and not pauseReason() then releaseKey() end
+            return
+        end
+        local paused = pauseReason()
+        if paused then pauseNow(paused); return end
+        local character = player.Character
+        local root = character and character:FindFirstChild("HumanoidRootPart")
+        local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+        if not root or not root:IsA("BasePart") or not humanoid or humanoid.Health <= 0 then
+            pauseNow("Ожидание персонажа")
+            return
+        end
+        if clock - lastPingAt >= 1 then
+            lastPingAt = clock
+            local ok, ping = pcall(function() return player:GetNetworkPing() end)
+            if ok and type(ping) == "number" and ping == ping then oneWayPing = math.clamp(ping * 0.5, 0, MAX_ONE_WAY_PING) end
+        end
+        if deltaTime <= 0 or deltaTime > 0.25 then resetSamples(); return end
+        local selected, earliest, hasRealBall, isTargeted = nil, math.huge, false, false
+        for ball, record in pairs(records) do
+            if record.real then
+                hasRealBall = true
+                local velocity = ballVelocity(ball, record, deltaTime)
+                if record.target == player.Name then
+                    isTargeted = true
+                    local offset = ball.Position - root.Position
+                    local distance = offset.Magnitude
+                    local relativeVelocity = velocity - root.AssemblyLinearVelocity
+                    local speed = relativeVelocity.Magnitude
+                    local closing = distance > 0.01 and -offset:Dot(relativeVelocity) / distance or 0
+                    if closing < -MIN_CLOSING_SPEED then
+                        record.awayTime += deltaTime
+                        if record.awayTime >= REARM_AWAY_SECONDS then record.fired = false end
+                    else
+                        record.awayTime = 0
+                    end
+                    if not record.fired and speed > MIN_CLOSING_SPEED and closing > MIN_CLOSING_SPEED
+                        and closing / speed >= MIN_APPROACH_COSINE then
+                        local radius = ball.Size.Magnitude * 0.5 + root.Size.Magnitude * 0.5 + 2
+                        local closestTime = math.max(0, -offset:Dot(relativeVelocity) / (speed * speed))
+                        local missDistance = (offset + relativeVelocity * closestTime).Magnitude
+                        local curveAllowance = math.min(8, speed * 0.025)
+                        local timeToContact = math.max(0, (distance - radius) / closing)
+                        local lead = LEAD_TIME + oneWayPing + math.min(deltaTime, 1 / 30)
+                        if missDistance <= radius + curveAllowance and timeToContact <= lead and timeToContact < earliest then
+                            earliest, selected = timeToContact, record
+                        end
+                    end
+                end
+            else
+                record.lastPosition = nil
+            end
+        end
+        if not container or not hasRealBall then setStatus("Ожидание мяча")
+        elseif not isTargeted then setStatus("Ожидание наведения")
+        elseif inputService:IsKeyDown(Enum.KeyCode.F) and not syntheticDown then setStatus("Пауза: F удерживается")
+        else setStatus("Отслеживание мяча") end
+        if selected then pressParry(selected) end
+    end)
+    bindContainer()
+    bindCharacter(player.Character)
+    setStatus("Выключено")
+
+    local controller = {}
+    function controller:SetEnabled(value)
+        if destroyed then return false, "Контроллер удалён" end
+        if value then
+            if enabled then return true end
+            if syntheticDown and not releaseKey() then
+                setStatus("Ошибка отпускания F")
+                return false, "Не удалось отпустить F"
+            end
+            sender = resolveInput()
+            if not sender then
+                setStatus("Ввод недоступен в этой среде")
+                return false, "Среда не предоставляет виртуальный ввод"
+            end
+            for _, record in pairs(records) do record.fired = false end
+            resetSamples()
+            setEnabledState(true)
+            setStatus(pauseReason() or "Ожидание мяча")
+            return true
+        end
+        setEnabledState(false)
+        resetSamples()
+        if not releaseKey() then
+            setStatus("Ошибка отпускания F")
+            return false, "Не удалось отпустить F"
+        end
+        setStatus("Выключено")
+        return true
+    end
+    function controller:Destroy()
+        if destroyed then return end
+        setEnabledState(false)
+        if not releaseKey() then setStatus("Ошибка отпускания F") end
+        destroyed = true
+        disconnectAll(connections)
+        disconnectAll(containerConnections)
+        disconnectAll(characterConnections)
+        for ball in pairs(records) do removeBall(ball) end
+        sender = nil
+    end
+    return controller
+end
+
+local parryCard = card(parryPage, "autoparry", 1)
+local parryButton = create("TextButton", {
+    Name = "AutoParryToggle", BackgroundTransparency = 1, Text = "",
+    Position = UDim2.new(1, -104, 0, 20), Size = UDim2.fromOffset(88, 44),
+    AutoButtonColor = false,
+}, parryCard)
+local parryTrack = create("Frame", {
+    Position = UDim2.fromOffset(16, 8), Size = UDim2.fromOffset(56, 28),
+    BackgroundColor3 = Color3.fromRGB(57, 68, 85), BorderSizePixel = 0,
+}, parryButton)
+round(parryTrack, 14)
+local parryThumb = create("Frame", {
+    AnchorPoint = Vector2.new(0, 0.5), Position = UDim2.new(0, 4, 0.5, 0),
+    Size = UDim2.fromOffset(20, 20), BackgroundColor3 = colors.text, BorderSizePixel = 0,
+}, parryTrack)
+round(parryThumb, 10)
+local parryState = label(parryCard, "ВЫКЛ", UDim2.new(1, -104, 0, 60), UDim2.fromOffset(88, 16), 10, colors.muted)
+parryState.TextXAlignment = Enum.TextXAlignment.Center
+local parryStatusCard = create("Frame", {
+    Name = "AutoParryStatus", Size = UDim2.new(1, -8, 0, 84), BackgroundColor3 = colors.panel, LayoutOrder = 2,
+}, parryPage)
+round(parryStatusCard)
+label(parryStatusCard, "Состояние", UDim2.fromOffset(16, 12), UDim2.new(1, -32, 0, 24), 14)
+local parryStatusLabel = label(parryStatusCard, "Выключено", UDim2.fromOffset(16, 42), UDim2.new(1, -32, 0, 28), 12, colors.muted)
+local parryEnabled = false
+local function renderAutoParry()
+    parryState.Text = parryEnabled and "ВКЛ" or "ВЫКЛ"
+    parryState.TextColor3 = parryEnabled and colors.accent or colors.muted
+    animate(parryTrack, {BackgroundColor3 = parryEnabled and colors.accent or Color3.fromRGB(57, 68, 85)})
+    animate(parryThumb, {Position = UDim2.new(0, parryEnabled and 32 or 4, 0.5, 0)})
+end
+table.insert(accentObjects, {parryButton, "toggle", renderAutoParry})
+local autoParry = newAutoParryController({
+    player = player,
+    onStatus = function(message) if gui.Parent then parryStatusLabel.Text = message end end,
+    onEnabled = function(enabled)
+        parryEnabled = enabled
+        if gui.Parent then renderAutoParry() end
+    end,
+})
+stopAutoParry = function() autoParry:Destroy() end
+connect(parryButton.Activated, function()
+    local ok, reason = autoParry:SetEnabled(not parryEnabled)
+    if not ok and reason then notify(reason) end
+end)
+renderAutoParry()
+
+toggle(settings, "Анимации", true, 1, function(enabled) animations = enabled end)
+toggle(settings, "Уведомления", true, 2, function(enabled)
     notifications = enabled
     if not enabled then toast.Visible = false end
 end)
 local themes = {colors.accent, Color3.fromRGB(161, 147, 255), Color3.fromRGB(255, 188, 105)}
 local themeIndex = 1
-action(settings, "Акцентный цвет", "Мятный / лавандовый / янтарный.", "Сменить", 3, function()
+action(settings, "Акцентный цвет", "Сменить", 3, function()
     themeIndex = themeIndex % #themes + 1
     colors.accent = themes[themeIndex]
     for _, entry in ipairs(accentObjects) do
