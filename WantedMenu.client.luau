@@ -24,6 +24,7 @@ local connections = {}
 local animations = true
 local notifications = true
 local accentObjects = {}
+local stopFlight = function() end
 local function connect(signal, callback)
     local connection = signal:Connect(callback)
     table.insert(connections, connection)
@@ -74,6 +75,7 @@ local gui = create("ScreenGui", {
     ZIndexBehavior = Enum.ZIndexBehavior.Sibling, DisplayOrder = 20,
 }, playerGui)
 gui.Destroying:Connect(function()
+    stopFlight()
     for _, connection in ipairs(connections) do connection:Disconnect() end
 end)
 local root = create("Frame", {Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1}, gui)
@@ -99,7 +101,7 @@ local dragBar = create("Frame", {
 local title = label(dragBar, "WANTED", UDim2.fromOffset(24, 14), UDim2.fromOffset(170, 30), 25)
 title.Font = Enum.Font.GothamBlack
 accent(title, "TextColor3")
-label(dragBar, "TEST PANEL  /  v1.0", UDim2.fromOffset(25, 47), UDim2.fromOffset(230, 18), 10, colors.muted)
+label(dragBar, "TEST PANEL  /  v1.1", UDim2.fromOffset(25, 47), UDim2.fromOffset(230, 18), 10, colors.muted)
 local close = button(window, "×", UDim2.new(1, -52, 0, 20), UDim2.fromOffset(32, 32))
 close.TextSize = 24
 local divider = create("Frame", {
@@ -231,12 +233,198 @@ end
 label(stats, "LIVE", UDim2.new(1, -75, 0, 30), UDim2.fromOffset(60, 24), 13, colors.accent)
 action(home, "Текущая сессия", "Показать идентификатор плейса.", "Показать", 3, function() notify("PlaceId: " .. tostring(game.PlaceId)) end)
 
--- Добавляй свои кнопки здесь. callback вызывается по нажатию.
-action(features, "Тест уведомления", "Пример подключения обработчика кнопки.", "Запустить", 1, function() notify("Тестовое действие выполнено.") end)
-action(features, "Моя функция", "Замени callback на свою тестовую логику.", "Выполнить", 2, function()
-    -- TODO: твоя функция. Изменения игрового состояния проверяй на сервере.
-    notify("Подключи свою функцию в разделе features.")
+-- Полёт для тестовой сессии. Сервер плейса может ограничивать перемещение.
+local flight = nil
+local flightSpeed = 60
+local flightSpeeds = {30, 60, 90, 120}
+local speedIndex = 2
+local focused = true
+local flightKeys = {}
+local verticalTouches = {}
+local flightCard = card(features, "Полёт", "WASD — движение • Space / E — вверх\nCtrl / Q — вниз • F — вкл./выкл.", 1)
+local flightButton = button(flightCard, "OFF  ○", UDim2.new(1, -104, 0.5, -18), UDim2.fromOffset(88, 36))
+local flightPad = create("Frame", {
+    AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -18, 0.5, 0),
+    Size = UDim2.fromOffset(58, 132), BackgroundTransparency = 1, Visible = false,
+}, root)
+local upButton = button(flightPad, "↑", UDim2.fromOffset(0, 0), UDim2.fromOffset(58, 58))
+local downButton = button(flightPad, "↓", UDim2.fromOffset(0, 70), UDim2.fromOffset(58, 58))
+upButton.TextSize, downButton.TextSize = 28, 28
+accent(upButton, "TextColor3")
+accent(downButton, "TextColor3")
+local function renderFlight()
+    flightButton.Text = flight and "ON  ●" or "OFF  ○"
+    flightButton.TextColor3 = flight and colors.accent or colors.muted
+    flightPad.Visible = flight ~= nil
+end
+table.insert(accentObjects, {flightButton, "toggle", renderFlight})
+
+stopFlight = function()
+    local previous = flight
+    flight = nil
+    table.clear(flightKeys)
+    table.clear(verticalTouches)
+    if previous then
+        if previous.died then previous.died:Disconnect() end
+        for _, object in ipairs(previous.objects) do object:Destroy() end
+        local humanoid = previous.humanoid
+        if humanoid.Parent then
+            humanoid.AutoRotate = previous.autoRotate
+            humanoid.PlatformStand = previous.platformStand
+            if humanoid.Health > 0 and not previous.platformStand then
+                humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
+            end
+        end
+        if previous.root.Parent then
+            previous.root.AssemblyLinearVelocity = Vector3.zero
+            previous.root.AssemblyAngularVelocity = Vector3.zero
+        end
+    end
+    renderFlight()
+end
+
+local function startFlight()
+    if flight then return end
+    local character = player.Character
+    local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+    local characterRoot = character and character:FindFirstChild("HumanoidRootPart")
+    if not humanoid or not characterRoot or humanoid.Health <= 0 then
+        notify("Дождись появления персонажа.")
+        return
+    end
+    if humanoid.Sit or humanoid.PlatformStand or characterRoot.Anchored then
+        notify("Для полёта выйди из транспорта и встань на ноги.")
+        return
+    end
+    flight = {
+        humanoid = humanoid, root = characterRoot, character = character,
+        autoRotate = humanoid.AutoRotate, platformStand = humanoid.PlatformStand,
+        objects = {},
+    }
+    local session = flight
+    -- Регистрируем объекты сразу, чтобы убрать их даже при ошибке настройки.
+    local function flightObject(class)
+        local object = Instance.new(class)
+        table.insert(session.objects, object)
+        object.Name = "WantedFlight" .. class
+        return object
+    end
+    local ok, err = pcall(function()
+        local attachment = flightObject("Attachment")
+        attachment.Parent = characterRoot
+        local velocity = flightObject("LinearVelocity")
+        velocity.Attachment0 = attachment
+        velocity.RelativeTo = Enum.ActuatorRelativeTo.World
+        velocity.VelocityConstraintMode = Enum.VelocityConstraintMode.Vector
+        velocity.ForceLimitsEnabled = false
+        velocity.VectorVelocity = Vector3.zero
+        velocity.Parent = characterRoot
+        local orientation = flightObject("AlignOrientation")
+        orientation.Mode = Enum.OrientationAlignmentMode.OneAttachment
+        orientation.Attachment0 = attachment
+        orientation.MaxTorque = 1000000
+        orientation.MaxAngularVelocity = 20
+        orientation.Responsiveness = 25
+        orientation.CFrame = characterRoot.CFrame.Rotation
+        orientation.Parent = characterRoot
+        session.velocity, session.orientation = velocity, orientation
+        humanoid.AutoRotate = false
+        humanoid.PlatformStand = true
+        session.died = humanoid.Died:Connect(stopFlight)
+    end)
+    if not ok then
+        stopFlight()
+        warn("Wanted flight: " .. tostring(err))
+        notify("Не удалось включить полёт. Смотри Output.")
+        return
+    end
+    renderFlight()
+    notify("Полёт включён. WASD + Space / Ctrl. F — выключить.")
+end
+local function toggleFlight()
+    if flight then stopFlight() else startFlight() end
+end
+connect(flightButton.Activated, toggleFlight)
+connect(player.CharacterRemoving, stopFlight)
+connect(player.CharacterAdded, stopFlight)
+local acceptedKeys = {
+    [Enum.KeyCode.W] = true, [Enum.KeyCode.A] = true,
+    [Enum.KeyCode.S] = true, [Enum.KeyCode.D] = true,
+    [Enum.KeyCode.Space] = true, [Enum.KeyCode.E] = true,
+    [Enum.KeyCode.LeftControl] = true, [Enum.KeyCode.Q] = true,
+}
+connect(UserInputService.InputBegan, function(input, processed)
+    if processed or UserInputService:GetFocusedTextBox() then return end
+    if input.KeyCode == Enum.KeyCode.F then toggleFlight(); return end
+    if flight and acceptedKeys[input.KeyCode] then flightKeys[input.KeyCode] = true end
 end)
+local function resetFlightInput()
+    table.clear(flightKeys)
+    table.clear(verticalTouches)
+end
+connect(UserInputService.InputEnded, function(input)
+    flightKeys[input.KeyCode] = nil
+    verticalTouches[input] = nil
+end)
+connect(UserInputService.TextBoxFocused, resetFlightInput)
+connect(UserInputService.WindowFocusReleased, function() focused = false; resetFlightInput() end)
+connect(UserInputService.WindowFocused, function() focused = true end)
+local function bindVertical(control, direction)
+    connect(control.InputBegan, function(input)
+        if flight and (input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1) then
+            verticalTouches[input] = direction
+        end
+    end)
+end
+bindVertical(upButton, 1)
+bindVertical(downButton, -1)
+local function held(key) return flightKeys[key] and 1 or 0 end
+connect(RunService.PreSimulation, function()
+    local session = flight
+    if not session then return end
+    if player.Character ~= session.character or not session.root:IsDescendantOf(workspace)
+        or session.humanoid.Health <= 0 or session.humanoid.Sit or session.root.Anchored
+        or not session.velocity.Parent or not session.orientation.Parent then
+        stopFlight()
+        return
+    end
+    local camera = workspace.CurrentCamera
+    if not camera or not focused or UserInputService:GetFocusedTextBox() then
+        session.velocity.VectorVelocity = Vector3.zero
+        return
+    end
+    local look = camera.CFrame.LookVector
+    local forward = Vector3.new(look.X, 0, look.Z)
+    if forward.Magnitude < 0.01 then
+        local right = camera.CFrame.RightVector
+        forward = Vector3.new(right.Z, 0, -right.X)
+    end
+    forward = forward.Unit
+    local right = forward:Cross(Vector3.yAxis)
+    local horizontal = right * (held(Enum.KeyCode.D) - held(Enum.KeyCode.A))
+        + forward * (held(Enum.KeyCode.W) - held(Enum.KeyCode.S))
+    -- Стандартный джойстик Roblox задаёт MoveDirection в мировых координатах.
+    if horizontal.Magnitude == 0 and (UserInputService.TouchEnabled or UserInputService.GamepadEnabled) then
+        local move = session.humanoid.MoveDirection
+        horizontal = Vector3.new(move.X, 0, move.Z)
+    end
+    local vertical = math.max(held(Enum.KeyCode.Space), held(Enum.KeyCode.E))
+        - math.max(held(Enum.KeyCode.LeftControl), held(Enum.KeyCode.Q))
+    for _, direction in pairs(verticalTouches) do vertical += direction end
+    local direction = horizontal + Vector3.yAxis * math.clamp(vertical, -1, 1)
+    if direction.Magnitude > 1 then direction = direction.Unit end
+    session.velocity.VectorVelocity = direction * flightSpeed
+    session.orientation.CFrame = CFrame.lookAt(Vector3.zero, forward)
+end)
+local speedCard = card(features, "Скорость полёта", "30 / 60 / 90 / 120 studs в секунду.", 2)
+local speedButton = button(speedCard, "60 studs/s", UDim2.new(1, -126, 0.5, -18), UDim2.fromOffset(110, 36))
+accent(speedButton, "TextColor3")
+connect(speedButton.Activated, function()
+    speedIndex = speedIndex % #flightSpeeds + 1
+    flightSpeed = flightSpeeds[speedIndex]
+    speedButton.Text = tostring(flightSpeed) .. " studs/s"
+end)
+renderFlight()
 toggle(features, "Показывать FPS", "Локальный счётчик на главной вкладке.", true, 3, function(enabled)
     fpsLabel.Visible = enabled
 end)
