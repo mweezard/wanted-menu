@@ -6,6 +6,7 @@
 local Players = game:GetService("Players")
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
+local ContextActionService = game:GetService("ContextActionService")
 local RunService = game:GetService("RunService")
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
@@ -47,6 +48,8 @@ local animations = true
 local notifications = true
 local accentObjects = {}
 local stopFlight = function() end
+local stopSliderDrag = function() end
+local menuActionName = "BladeBallToggleMenu_" .. game:GetService("HttpService"):GenerateGUID(false)
 local function connect(signal, callback)
     local connection = signal:Connect(callback)
     table.insert(connections, connection)
@@ -98,6 +101,8 @@ local gui = create("ScreenGui", {
 }, playerGui)
 gui:SetAttribute("CodexTestPanel", true)
 gui.Destroying:Connect(function()
+    ContextActionService:UnbindAction(menuActionName)
+    stopSliderDrag()
     stopFlight()
     for _, connection in ipairs(connections) do connection:Disconnect() end
 end)
@@ -124,7 +129,7 @@ local dragBar = create("Frame", {
 local title = label(dragBar, "Blade ball", UDim2.fromOffset(24, 14), UDim2.fromOffset(250, 30), 25)
 title.Font = Enum.Font.GothamBlack
 accent(title, "TextColor3")
-label(dragBar, "TEST PANEL  /  v1.4", UDim2.fromOffset(25, 47), UDim2.fromOffset(230, 18), 10, colors.muted)
+label(dragBar, "TEST PANEL  /  v1.5", UDim2.fromOffset(25, 47), UDim2.fromOffset(230, 18), 10, colors.muted)
 local close = button(window, "×", UDim2.new(1, -52, 0, 20), UDim2.fromOffset(32, 32))
 close.TextSize = 24
 local divider = create("Frame", {
@@ -135,22 +140,25 @@ local sidebar = create("Frame", {Position = UDim2.fromOffset(20, 96), Size = UDi
 create("UIListLayout", {Padding = UDim.new(0, 10), SortOrder = Enum.SortOrder.LayoutOrder}, sidebar)
 local content = create("Frame", {Position = UDim2.fromOffset(190, 96), Size = UDim2.fromOffset(490, 305), BackgroundTransparency = 1}, window)
 label(window, "LOCAL SESSION  •  " .. player.DisplayName, UDim2.fromOffset(24, 413), UDim2.fromOffset(470, 20), 11, colors.muted)
-label(window, "Right Shift — меню", UDim2.fromOffset(522, 413), UDim2.fromOffset(158, 20), 11, colors.muted)
+label(window, "Backspace — меню", UDim2.fromOffset(522, 413), UDim2.fromOffset(158, 20), 11, colors.muted)
 
 local reopen = button(root, "BB", UDim2.new(0, 16, 0.5, -22), UDim2.fromOffset(44, 44))
 accent(reopen, "TextColor3")
 reopen.Visible = false
 local function setVisible(visible)
+    if not visible then stopSliderDrag() end
     window.Visible = visible
     reopen.Visible = not visible
 end
 connect(close.Activated, function() setVisible(false) end)
 connect(reopen.Activated, function() setVisible(true) end)
-connect(UserInputService.InputBegan, function(input, processed)
-    if not processed and not UserInputService:GetFocusedTextBox() and input.KeyCode == Enum.KeyCode.RightShift then
+ContextActionService:BindActionAtPriority(menuActionName, function(_, inputState)
+    if UserInputService:GetFocusedTextBox() then return Enum.ContextActionResult.Pass end
+    if inputState == Enum.UserInputState.Begin then
         setVisible(not window.Visible)
     end
-end)
+    return Enum.ContextActionResult.Sink
+end, false, Enum.ContextActionPriority.High.Value + 1, Enum.KeyCode.Backspace)
 
 local dragInput, dragStart, startPosition
 connect(dragBar.InputBegan, function(input)
@@ -194,6 +202,7 @@ end
 
 local pages, tabs = {}, {}
 local function selectTab(name)
+    stopSliderDrag()
     for key, page in pairs(pages) do
         page.Visible = key == name
         tabs[key].TextColor3 = key == name and colors.accent or colors.muted
@@ -249,8 +258,7 @@ local settings = page("02   Настройки", 2)
 -- Полёт для тестовой сессии. Сервер плейса может ограничивать перемещение.
 local flight = nil
 local flightSpeed = 60
-local flightSpeeds = {30, 60, 90, 120}
-local speedIndex = 2
+local minFlightSpeed, maxFlightSpeed = 30, 120
 local focused = true
 local flightKeys = {}
 local acceptedKeys = {
@@ -258,10 +266,28 @@ local acceptedKeys = {
     [Enum.KeyCode.S] = true, [Enum.KeyCode.D] = true,
 }
 local flightCard = card(home, "полет", "W/S — по направлению камеры\nA/D — в стороны. Смотри вверх, чтобы набрать высоту.", 1)
-local flightButton = button(flightCard, "OFF  ○", UDim2.new(1, -104, 0.5, -18), UDim2.fromOffset(88, 36))
+local flightButton = create("TextButton", {
+    Name = "FlightToggle", BackgroundTransparency = 1, Text = "",
+    Position = UDim2.new(1, -104, 0, 20), Size = UDim2.fromOffset(88, 44),
+    AutoButtonColor = false,
+}, flightCard)
+local flightTrack = create("Frame", {
+    Position = UDim2.fromOffset(16, 8), Size = UDim2.fromOffset(56, 28),
+    BackgroundColor3 = Color3.fromRGB(57, 68, 85), BorderSizePixel = 0,
+}, flightButton)
+round(flightTrack, 14)
+local flightThumb = create("Frame", {
+    AnchorPoint = Vector2.new(0, 0.5), Position = UDim2.new(0, 4, 0.5, 0),
+    Size = UDim2.fromOffset(20, 20), BackgroundColor3 = colors.text, BorderSizePixel = 0,
+}, flightTrack)
+round(flightThumb, 10)
+local flightStatus = label(flightCard, "ВЫКЛ", UDim2.new(1, -104, 0, 60), UDim2.fromOffset(88, 16), 10, colors.muted)
+flightStatus.TextXAlignment = Enum.TextXAlignment.Center
 local function renderFlight()
-    flightButton.Text = flight and "ON  ●" or "OFF  ○"
-    flightButton.TextColor3 = flight and colors.accent or colors.muted
+    flightStatus.Text = flight and "ВКЛ" or "ВЫКЛ"
+    flightStatus.TextColor3 = flight and colors.accent or colors.muted
+    animate(flightTrack, {BackgroundColor3 = flight and colors.accent or Color3.fromRGB(57, 68, 85)})
+    animate(flightThumb, {Position = UDim2.new(0, flight and 32 or 4, 0.5, 0)})
 end
 table.insert(accentObjects, {flightButton, "toggle", renderFlight})
 
@@ -394,14 +420,81 @@ connect(RunService.PreSimulation, function()
     -- Всё тело повторяет поворот и наклон камеры, включая взгляд вверх/вниз.
     session.orientation.CFrame = camera.CFrame.Rotation
 end)
-local speedCard = card(home, "Скорость полёта", "30 / 60 / 90 / 120 studs в секунду.", 2)
-local speedButton = button(speedCard, "60 studs/s", UDim2.new(1, -126, 0.5, -18), UDim2.fromOffset(110, 36))
-accent(speedButton, "TextColor3")
-connect(speedButton.Activated, function()
-    speedIndex = speedIndex % #flightSpeeds + 1
-    flightSpeed = flightSpeeds[speedIndex]
-    speedButton.Text = tostring(flightSpeed) .. " studs/s"
+local speedCard = create("Frame", {
+    Name = "FlightSpeed", Size = UDim2.new(1, -8, 0, 112),
+    BackgroundColor3 = colors.panel, LayoutOrder = 2,
+}, home)
+round(speedCard)
+label(speedCard, "Скорость полёта", UDim2.fromOffset(16, 12), UDim2.fromOffset(280, 24), 14)
+local speedValue = label(speedCard, "60 studs/s", UDim2.new(1, -156, 0, 12), UDim2.fromOffset(140, 24), 14)
+speedValue.TextXAlignment = Enum.TextXAlignment.Right
+accent(speedValue, "TextColor3")
+local speedTrack = create("Frame", {
+    Position = UDim2.fromOffset(26, 61), Size = UDim2.new(1, -52, 0, 6),
+    BackgroundColor3 = Color3.fromRGB(57, 68, 85), BorderSizePixel = 0,
+}, speedCard)
+round(speedTrack, 3)
+local speedFill = create("Frame", {
+    Size = UDim2.fromScale(0, 1), BorderSizePixel = 0,
+}, speedTrack)
+round(speedFill, 3)
+accent(speedFill, "BackgroundColor3")
+local speedThumb = create("Frame", {
+    AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0, 0.5),
+    Size = UDim2.fromOffset(18, 18), BackgroundColor3 = colors.text, BorderSizePixel = 0,
+}, speedTrack)
+round(speedThumb, 9)
+local speedHitArea = create("TextButton", {
+    Name = "FlightSpeedSlider", Position = UDim2.fromOffset(16, 42),
+    Size = UDim2.new(1, -32, 0, 44), Text = "", BackgroundTransparency = 1,
+    AutoButtonColor = false, Selectable = false, ZIndex = 3,
+}, speedCard)
+label(speedCard, tostring(minFlightSpeed), UDim2.fromOffset(16, 90), UDim2.fromOffset(70, 16), 10, colors.muted)
+local maxSpeedLabel = label(speedCard, tostring(maxFlightSpeed), UDim2.new(1, -86, 0, 90), UDim2.fromOffset(70, 16), 10, colors.muted)
+maxSpeedLabel.TextXAlignment = Enum.TextXAlignment.Right
+local function setFlightSpeed(value)
+    flightSpeed = math.clamp(math.floor(value + 0.5), minFlightSpeed, maxFlightSpeed)
+    local alpha = (flightSpeed - minFlightSpeed) / (maxFlightSpeed - minFlightSpeed)
+    speedValue.Text = tostring(flightSpeed) .. " studs/s"
+    speedFill.Size = UDim2.fromScale(alpha, 1)
+    speedThumb.Position = UDim2.fromScale(alpha, 0.5)
+end
+local sliderInput = nil
+local previousScrolling = true
+stopSliderDrag = function()
+    if not sliderInput then return end
+    sliderInput = nil
+    home.ScrollingEnabled = previousScrolling
+end
+local function updateSpeedFromPointer(input)
+    local width = speedTrack.AbsoluteSize.X
+    if width <= 0 then return end
+    local alpha = math.clamp((input.Position.X - speedTrack.AbsolutePosition.X) / width, 0, 1)
+    setFlightSpeed(minFlightSpeed + alpha * (maxFlightSpeed - minFlightSpeed))
+end
+connect(speedHitArea.InputBegan, function(input)
+    if sliderInput or not window.Visible or not home.Visible or UserInputService:GetFocusedTextBox() then return end
+    if input.UserInputType ~= Enum.UserInputType.MouseButton1 and input.UserInputType ~= Enum.UserInputType.Touch then return end
+    sliderInput = input
+    previousScrolling = home.ScrollingEnabled
+    home.ScrollingEnabled = false
+    updateSpeedFromPointer(input)
 end)
+connect(UserInputService.InputChanged, function(input)
+    if not sliderInput then return end
+    if sliderInput.UserInputType == Enum.UserInputType.Touch then
+        if input ~= sliderInput then return end
+    elseif input.UserInputType ~= Enum.UserInputType.MouseMovement then
+        return
+    end
+    updateSpeedFromPointer(input)
+end)
+connect(UserInputService.InputEnded, function(input)
+    if input == sliderInput then stopSliderDrag() end
+end)
+connect(UserInputService.WindowFocusReleased, stopSliderDrag)
+connect(UserInputService.TextBoxFocused, stopSliderDrag)
+setFlightSpeed(flightSpeed)
 renderFlight()
 
 toggle(settings, "Анимации", "Плавное изменение оформления кнопок.", true, 1, function(enabled) animations = enabled end)
