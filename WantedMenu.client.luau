@@ -101,7 +101,7 @@ local dragBar = create("Frame", {
 local title = label(dragBar, "WANTED", UDim2.fromOffset(24, 14), UDim2.fromOffset(170, 30), 25)
 title.Font = Enum.Font.GothamBlack
 accent(title, "TextColor3")
-label(dragBar, "TEST PANEL  /  v1.1", UDim2.fromOffset(25, 47), UDim2.fromOffset(230, 18), 10, colors.muted)
+label(dragBar, "TEST PANEL  /  v1.2", UDim2.fromOffset(25, 47), UDim2.fromOffset(230, 18), 10, colors.muted)
 local close = button(window, "×", UDim2.new(1, -52, 0, 20), UDim2.fromOffset(32, 32))
 close.TextSize = 24
 local divider = create("Frame", {
@@ -221,9 +221,8 @@ local function toggle(parent, heading, description, initial, index, callback)
 end
 
 local home = page("01   Главная", 1)
-local features = page("02   Функции", 2)
-local settings = page("03   Настройки", 3)
-action(home, "Панель готова", "Интерфейс для тестирования своего плейса.", "Проверить", 1, function() notify("Всё работает. Добро пожаловать, " .. player.DisplayName .. "!") end)
+local settings = page("02   Настройки", 2)
+action(home, "Панель готова", "Интерфейс для тестирования своего плейса.", "Проверить", 3, function() notify("Всё работает. Добро пожаловать, " .. player.DisplayName .. "!") end)
 local stats = card(home, "Производительность", "FPS: измерение…", 2)
 local statsLabel = stats:GetChildren()
 local fpsLabel
@@ -231,7 +230,7 @@ for _, object in ipairs(statsLabel) do
     if object:IsA("TextLabel") and string.find(object.Text, "FPS", 1, true) then fpsLabel = object end
 end
 label(stats, "LIVE", UDim2.new(1, -75, 0, 30), UDim2.fromOffset(60, 24), 13, colors.accent)
-action(home, "Текущая сессия", "Показать идентификатор плейса.", "Показать", 3, function() notify("PlaceId: " .. tostring(game.PlaceId)) end)
+action(home, "Текущая сессия", "Показать идентификатор плейса.", "Показать", 4, function() notify("PlaceId: " .. tostring(game.PlaceId)) end)
 
 -- Полёт для тестовой сессии. Сервер плейса может ограничивать перемещение.
 local flight = nil
@@ -240,22 +239,15 @@ local flightSpeeds = {30, 60, 90, 120}
 local speedIndex = 2
 local focused = true
 local flightKeys = {}
-local verticalTouches = {}
-local flightCard = card(features, "Полёт", "WASD — движение • Space / E — вверх\nCtrl / Q — вниз • F — вкл./выкл.", 1)
+local acceptedKeys = {
+    [Enum.KeyCode.W] = true, [Enum.KeyCode.A] = true,
+    [Enum.KeyCode.S] = true, [Enum.KeyCode.D] = true,
+}
+local flightCard = card(home, "полет", "W/S — по направлению камеры\nA/D — в стороны. Смотри вверх, чтобы набрать высоту.", 1)
 local flightButton = button(flightCard, "OFF  ○", UDim2.new(1, -104, 0.5, -18), UDim2.fromOffset(88, 36))
-local flightPad = create("Frame", {
-    AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -18, 0.5, 0),
-    Size = UDim2.fromOffset(58, 132), BackgroundTransparency = 1, Visible = false,
-}, root)
-local upButton = button(flightPad, "↑", UDim2.fromOffset(0, 0), UDim2.fromOffset(58, 58))
-local downButton = button(flightPad, "↓", UDim2.fromOffset(0, 70), UDim2.fromOffset(58, 58))
-upButton.TextSize, downButton.TextSize = 28, 28
-accent(upButton, "TextColor3")
-accent(downButton, "TextColor3")
 local function renderFlight()
     flightButton.Text = flight and "ON  ●" or "OFF  ○"
     flightButton.TextColor3 = flight and colors.accent or colors.muted
-    flightPad.Visible = flight ~= nil
 end
 table.insert(accentObjects, {flightButton, "toggle", renderFlight})
 
@@ -263,7 +255,6 @@ stopFlight = function()
     local previous = flight
     flight = nil
     table.clear(flightKeys)
-    table.clear(verticalTouches)
     if previous then
         if previous.died then previous.died:Disconnect() end
         for _, object in ipairs(previous.objects) do object:Destroy() end
@@ -338,8 +329,13 @@ local function startFlight()
         notify("Не удалось включить полёт. Смотри Output.")
         return
     end
+    if focused and not UserInputService:GetFocusedTextBox() then
+        for key in pairs(acceptedKeys) do
+            if UserInputService:IsKeyDown(key) then flightKeys[key] = true end
+        end
+    end
     renderFlight()
-    notify("Полёт включён. WASD + Space / Ctrl. F — выключить.")
+    notify("полет включён. Управляй WASD и направлением камеры.")
 end
 local function toggleFlight()
     if flight then stopFlight() else startFlight() end
@@ -347,37 +343,19 @@ end
 connect(flightButton.Activated, toggleFlight)
 connect(player.CharacterRemoving, stopFlight)
 connect(player.CharacterAdded, stopFlight)
-local acceptedKeys = {
-    [Enum.KeyCode.W] = true, [Enum.KeyCode.A] = true,
-    [Enum.KeyCode.S] = true, [Enum.KeyCode.D] = true,
-    [Enum.KeyCode.Space] = true, [Enum.KeyCode.E] = true,
-    [Enum.KeyCode.LeftControl] = true, [Enum.KeyCode.Q] = true,
-}
 connect(UserInputService.InputBegan, function(input, processed)
     if processed or UserInputService:GetFocusedTextBox() then return end
-    if input.KeyCode == Enum.KeyCode.F then toggleFlight(); return end
     if flight and acceptedKeys[input.KeyCode] then flightKeys[input.KeyCode] = true end
 end)
 local function resetFlightInput()
     table.clear(flightKeys)
-    table.clear(verticalTouches)
 end
 connect(UserInputService.InputEnded, function(input)
     flightKeys[input.KeyCode] = nil
-    verticalTouches[input] = nil
 end)
 connect(UserInputService.TextBoxFocused, resetFlightInput)
 connect(UserInputService.WindowFocusReleased, function() focused = false; resetFlightInput() end)
 connect(UserInputService.WindowFocused, function() focused = true end)
-local function bindVertical(control, direction)
-    connect(control.InputBegan, function(input)
-        if flight and (input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1) then
-            verticalTouches[input] = direction
-        end
-    end)
-end
-bindVertical(upButton, 1)
-bindVertical(downButton, -1)
 local function held(key) return flightKeys[key] and 1 or 0 end
 connect(RunService.PreSimulation, function()
     local session = flight
@@ -400,23 +378,15 @@ connect(RunService.PreSimulation, function()
         forward = Vector3.new(right.Z, 0, -right.X)
     end
     forward = forward.Unit
-    local right = forward:Cross(Vector3.yAxis)
-    local horizontal = right * (held(Enum.KeyCode.D) - held(Enum.KeyCode.A))
-        + forward * (held(Enum.KeyCode.W) - held(Enum.KeyCode.S))
-    -- Стандартный джойстик Roblox задаёт MoveDirection в мировых координатах.
-    if horizontal.Magnitude == 0 and (UserInputService.TouchEnabled or UserInputService.GamepadEnabled) then
-        local move = session.humanoid.MoveDirection
-        horizontal = Vector3.new(move.X, 0, move.Z)
-    end
-    local vertical = math.max(held(Enum.KeyCode.Space), held(Enum.KeyCode.E))
-        - math.max(held(Enum.KeyCode.LeftControl), held(Enum.KeyCode.Q))
-    for _, direction in pairs(verticalTouches) do vertical += direction end
-    local direction = horizontal + Vector3.yAxis * math.clamp(vertical, -1, 1)
+    -- Полное направление камеры позволяет набирать/снижать высоту через W/S.
+    -- forward выше используется только для вертикального положения персонажа.
+    local direction = camera.CFrame.RightVector * (held(Enum.KeyCode.D) - held(Enum.KeyCode.A))
+        + look * (held(Enum.KeyCode.W) - held(Enum.KeyCode.S))
     if direction.Magnitude > 1 then direction = direction.Unit end
     session.velocity.VectorVelocity = direction * flightSpeed
     session.orientation.CFrame = CFrame.lookAt(Vector3.zero, forward)
 end)
-local speedCard = card(features, "Скорость полёта", "30 / 60 / 90 / 120 studs в секунду.", 2)
+local speedCard = card(settings, "Скорость полёта", "30 / 60 / 90 / 120 studs в секунду.", 1)
 local speedButton = button(speedCard, "60 studs/s", UDim2.new(1, -126, 0.5, -18), UDim2.fromOffset(110, 36))
 accent(speedButton, "TextColor3")
 connect(speedButton.Activated, function()
@@ -425,18 +395,18 @@ connect(speedButton.Activated, function()
     speedButton.Text = tostring(flightSpeed) .. " studs/s"
 end)
 renderFlight()
-toggle(features, "Показывать FPS", "Локальный счётчик на главной вкладке.", true, 3, function(enabled)
+toggle(settings, "Показывать FPS", "Локальный счётчик на главной вкладке.", true, 2, function(enabled)
     fpsLabel.Visible = enabled
 end)
 
-toggle(settings, "Анимации", "Плавное изменение оформления кнопок.", true, 1, function(enabled) animations = enabled end)
-toggle(settings, "Уведомления", "Всплывающие сообщения внизу экрана.", true, 2, function(enabled)
+toggle(settings, "Анимации", "Плавное изменение оформления кнопок.", true, 3, function(enabled) animations = enabled end)
+toggle(settings, "Уведомления", "Всплывающие сообщения внизу экрана.", true, 4, function(enabled)
     notifications = enabled
     if not enabled then toast.Visible = false end
 end)
 local themes = {colors.accent, Color3.fromRGB(161, 147, 255), Color3.fromRGB(255, 188, 105)}
 local themeIndex = 1
-action(settings, "Акцентный цвет", "Мятный / лавандовый / янтарный.", "Сменить", 3, function()
+action(settings, "Акцентный цвет", "Мятный / лавандовый / янтарный.", "Сменить", 5, function()
     themeIndex = themeIndex % #themes + 1
     colors.accent = themes[themeIndex]
     for _, entry in ipairs(accentObjects) do
